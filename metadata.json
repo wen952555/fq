@@ -1,0 +1,5 @@
+{
+  "name": "CF Pages Node Deployer",
+  "description": "Cloudflare Pages + Functions 节点部署助手与配置生成器",
+  "requestFramePermissions": []
+}
