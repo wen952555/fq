@@ -2,6 +2,11 @@
 
 这是一个基于 Cloudflare Pages 和 Functions 构建的 VLESS 节点部署项目。它集成了 `edgetunnel` 的核心功能，并增加了 **Telegram 机器人控制面板**，让你可以在手机上随时随地管理你的节点。
 
+## 🛡️ 安全特性 (防滥用)
+- **KV 读写保护**：机器人 Webhook 启用了 Telegram 官方的 `Secret Token` 验证，并加入了内存缓存机制，彻底杜绝恶意请求刷爆你的 Cloudflare KV 免费额度。
+- **配置隔离**：所有敏感配置（如 `UUID`、`PROXYIP`）均通过环境变量或 KV 存储，代码库中不包含任何密码。
+- **请求优化 (`_routes.json`)**：内置了路由规则，静态资源（如 favicon 等）不会触发 Functions，每天为你节省大量的免费请求次数。
+
 ## 🚀 部署步骤 (GitHub 自动部署)
 
 1. **推送到 GitHub**
@@ -39,13 +44,18 @@
    *(第一个发送 `/bind` 的用户将被绑定为管理员，其他人无法再控制)*
 4. 绑定成功后，发送 `/start` 查看所有可用命令：
    - `/sub` - 🔗 **获取订阅链接** (支持 Clash, Sing-box, V2ray 等)
+   - `/vless` - ⚡ **获取单节点 VLESS 链接** (方便快速复制)
    - `/status` - 📊 查看节点当前状态
    - `/updateips` - 🔄 从云端同步最新优选 IP 库
    - `/addip <ip:port#remark>` - ➕ 手动添加优选 IP
    - `/getip` - 🌐 查看当前自定义优选 IP
    - `/clearip` - 🗑️ 清空自定义优选 IP
+   - `/proxyiplist` - 📋 获取推荐 ProxyIP 列表
    - `/proxyip <ip>` - 🎭 设置 ProxyIP (用于解锁流媒体或突破 CF 限制)
+   - `/setdomain <domain>` - 🌍 设置自定义域名 (需 CNAME 解析)
    - `/setuuid <uuid>` - 🔑 动态修改 UUID 密码
+   - `/genuuid` - 🎲 随机生成全新 UUID
+   - `/ping` - 🏓 测试机器人连通性与缓存状态
 
 ## ⚙️ 进阶管理
 
