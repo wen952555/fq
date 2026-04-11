@@ -48,6 +48,21 @@ export default {
 			return await 处理XHTTP请求(request, userID);
 		} else {
 			if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
+			if (env.KV && typeof env.KV.get === 'function' && 访问路径.startsWith('telegram/') && request.method === 'POST') {
+				try {
+					const TG_TXT = await env.KV.get('tg.json');
+					if (TG_TXT) {
+						const TG_JSON = JSON.parse(TG_TXT);
+						if (TG_JSON.BotToken && 访问路径 === `telegram/${TG_JSON.BotToken.toLowerCase()}`) {
+							const update = await request.json();
+							ctx.waitUntil(处理Telegram消息(update, env, TG_JSON, url.host, userID));
+							return new Response('OK', { status: 200 });
+						}
+					}
+				} catch (e) {
+					console.error('Telegram Webhook Error:', e);
+				}
+			}
 			if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }) });
 			if (env.KV && typeof env.KV.get === 'function') {
 				const 区分大小写访问路径 = url.pathname.slice(1);
@@ -71,6 +86,12 @@ export default {
 						}
 					}
 					return fetch(Pages静态页面 + '/login');
+				} else if (访问路径 === 'panel') {
+					const cookies = request.headers.get('Cookie') || '';
+					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
+					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
+					const token = await MD5MD5(host + userID);
+					return new Response(await panelHTML(host, token), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
 				} else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {//验证cookie后响应管理页面
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
@@ -178,6 +199,8 @@ export default {
 								} else {
 									if (!newConfig.BotToken || !newConfig.ChatID) return new Response(JSON.stringify({ error: '配置不完整' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 									await env.KV.put('tg.json', JSON.stringify(newConfig, null, 2));
+									const webhookUrl = `https://${url.host}/telegram/${newConfig.BotToken}`;
+									ctx.waitUntil(fetch(`https://api.telegram.org/bot${newConfig.BotToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`));
 								}
 								ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Config', config_JSON));
 								return new Response(JSON.stringify({ success: true, message: '配置已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -3515,6 +3538,148 @@ async function html1101(host, 访问IP) {
     
     
   </script> 
+</body>
+</html>`;
+}
+
+async function 处理Telegram消息(update, env, TG_JSON, host, userID) {
+	if (!update.message || !update.message.text) return;
+	const chatId = update.message.chat.id;
+	if (String(chatId) !== String(TG_JSON.ChatID)) return; // 只响应配置的 ChatID
+
+	const text = update.message.text.trim();
+	const botToken = TG_JSON.BotToken;
+	const sendMessage = async (msg) => {
+		await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
+		});
+	};
+
+	if (text === '/start' || text === '/help') {
+		await sendMessage(`🤖 <b>控制面板</b>\n\n/ip - 查看当前自定义优选IP\n/setip [IP列表] - 设置自定义优选IP (多个IP用换行分隔)\n/clearip - 清空自定义优选IP\n/sub - 获取订阅链接\n/info - 查看当前配置信息\n\n🌐 <b>网页版面板:</b> https://${host}/panel`);
+	} else if (text === '/ip') {
+		const currentIPs = await env.KV.get('ADD.txt') || '未设置';
+		await sendMessage(`🌐 <b>当前自定义优选IP:</b>\n<code>${currentIPs}</code>`);
+	} else if (text.startsWith('/setip ')) {
+		const newIPs = text.substring(7).trim();
+		if (newIPs) {
+			await env.KV.put('ADD.txt', newIPs);
+			await sendMessage(`✅ <b>自定义优选IP已更新:</b>\n<code>${newIPs}</code>`);
+		} else {
+			await sendMessage(`❌ 格式错误。请使用: /setip 1.1.1.1`);
+		}
+	} else if (text === '/clearip') {
+		await env.KV.delete('ADD.txt');
+		await sendMessage(`✅ <b>自定义优选IP已清空</b>`);
+	} else if (text === '/sub') {
+		const token = await MD5MD5(host + userID);
+		const subUrl = `https://${host}/sub?token=${token}`;
+		await sendMessage(`🔗 <b>您的订阅链接:</b>\n<code>${subUrl}</code>`);
+	} else if (text === '/info') {
+		let config_JSON = {};
+		try {
+			const configStr = await env.KV.get('config.json');
+			if (configStr) config_JSON = JSON.parse(configStr);
+		} catch (e) {}
+		const info = `⚙️ <b>当前配置信息:</b>\n\n` +
+			`<b>UUID:</b> <code>${config_JSON.UUID || '未设置'}</code>\n` +
+			`<b>协议:</b> ${config_JSON.协议类型 || 'vless'}\n` +
+			`<b>伪装域名:</b> ${config_JSON.HOST || '未设置'}\n` +
+			`<b>节点路径:</b> ${config_JSON.PATH || '/?ed=2560'}`;
+		await sendMessage(info);
+	}
+}
+
+async function panelHTML(host, token) {
+	const subUrl = `https://${host}/sub?token=${token}`;
+	return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订阅管理面板</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; color: #1f2937; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        h1 { text-align: center; color: #111827; margin-bottom: 30px; }
+        .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .card h2 { margin-top: 0; font-size: 1.25rem; color: #374151; }
+        .link-group { display: flex; align-items: center; margin-top: 15px; gap: 10px; flex-wrap: wrap; }
+        input[type="text"] { flex: 1; min-width: 200px; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background-color: #f9fafb; color: #4b5563; }
+        button { padding: 10px 15px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; transition: background-color 0.2s; font-weight: 500; }
+        .btn-copy { background-color: #3b82f6; color: white; }
+        .btn-copy:hover { background-color: #2563eb; }
+        .btn-import { background-color: #10b981; color: white; text-decoration: none; display: inline-block; text-align: center; }
+        .btn-import:hover { background-color: #059669; }
+        .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #374151; color: white; padding: 10px 20px; border-radius: 6px; display: none; }
+        @media (max-width: 600px) { .link-group { flex-direction: column; align-items: stretch; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 订阅管理面板</h1>
+        
+        <div class="card">
+            <h2>通用订阅 (V2Ray/Mixed)</h2>
+            <div class="link-group">
+                <input type="text" id="link-mixed" value="${subUrl}" readonly>
+                <button class="btn-copy" onclick="copyText('link-mixed')">复制</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Clash 订阅</h2>
+            <div class="link-group">
+                <input type="text" id="link-clash" value="${subUrl}&clash" readonly>
+                <button class="btn-copy" onclick="copyText('link-clash')">复制</button>
+                <a href="clash://install-config?url=${encodeURIComponent(subUrl + '&clash')}" class="btn-import">一键导入</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Surge 订阅</h2>
+            <div class="link-group">
+                <input type="text" id="link-surge" value="${subUrl}&surge" readonly>
+                <button class="btn-copy" onclick="copyText('link-surge')">复制</button>
+                <a href="surge:///install-config?url=${encodeURIComponent(subUrl + '&surge')}" class="btn-import">一键导入</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Sing-box 订阅</h2>
+            <div class="link-group">
+                <input type="text" id="link-singbox" value="${subUrl}&singbox" readonly>
+                <button class="btn-copy" onclick="copyText('link-singbox')">复制</button>
+                <a href="sing-box://import-remote-profile?url=${encodeURIComponent(subUrl + '&singbox')}" class="btn-import">一键导入</a>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>V2rayN / V2rayNG 订阅</h2>
+            <div class="link-group">
+                <input type="text" id="link-v2ray" value="${subUrl}&b64" readonly>
+                <button class="btn-copy" onclick="copyText('link-v2ray')">复制</button>
+                <a href="v2rayng://install-config?url=${encodeURIComponent(subUrl + '&b64')}" class="btn-import">一键导入</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">复制成功！</div>
+
+    <script>
+        function copyText(elementId) {
+            var copyText = document.getElementById(elementId);
+            copyText.select();
+            copyText.setSelectionRange(0, 99999);
+            document.execCommand("copy");
+            
+            var toast = document.getElementById("toast");
+            toast.style.display = "block";
+            setTimeout(function(){ toast.style.display = "none"; }, 2000);
+        }
+    </script>
 </body>
 </html>`;
 }
