@@ -14,6 +14,7 @@ export default {
 		const UA = request.headers.get('User-Agent') || 'null';
 		const upgradeHeader = (request.headers.get('Upgrade') || '').toLowerCase(), contentType = (request.headers.get('content-type') || '').toLowerCase();
 		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || env.UUID || env.uuid;
+		const webPanelPassword = env.PASSWORD || env.password || env.pswd || env.ADMIN || env.admin || env.TOKEN;
 		const 加密秘钥 = env.KEY || '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改';
 		const userIDMD5 = await MD5MD5(管理员密码 + 加密秘钥);
 		const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
@@ -73,30 +74,33 @@ export default {
 				} else if (访问路径 === 'login') {//处理登录页面和登录请求
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
-					if (authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
+					if (!webPanelPassword) return new Response('为了安全起见，请先在 Cloudflare Pages 后台设置 PASSWORD 环境变量作为管理面板密码，然后重新部署。', { status: 403, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+					if (authCookie == await MD5MD5(UA + 加密秘钥 + webPanelPassword)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
 					if (request.method === 'POST') {
 						const formData = await request.text();
 						const params = new URLSearchParams(formData);
 						const 输入密码 = params.get('password');
-						if (输入密码 === 管理员密码) {
+						if (输入密码 === webPanelPassword) {
 							// 密码正确，设置cookie并返回成功标记
 							const 响应 = new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-							响应.headers.set('Set-Cookie', `auth=${await MD5MD5(UA + 加密秘钥 + 管理员密码)}; Path=/; Max-Age=86400; HttpOnly`);
+							响应.headers.set('Set-Cookie', `auth=${await MD5MD5(UA + 加密秘钥 + webPanelPassword)}; Path=/; Max-Age=86400; HttpOnly`);
 							return 响应;
 						}
 					}
 					return fetch(Pages静态页面 + '/login');
 				} else if (访问路径 === 'panel') {
+					if (!webPanelPassword) return new Response('为了安全起见，请先在 Cloudflare Pages 后台设置 PASSWORD 环境变量作为管理面板密码，然后重新部署。', { status: 403, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
-					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
+					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + webPanelPassword)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
 					const token = await MD5MD5(host + userID);
 					return new Response(await panelHTML(host, token), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
 				} else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {//验证cookie后响应管理页面
+					if (!webPanelPassword) return new Response('为了安全起见，请先在 Cloudflare Pages 后台设置 PASSWORD 环境变量作为管理面板密码，然后重新部署。', { status: 403, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
 					// 没有cookie或cookie错误，跳转到/login页面
-					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
+					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + webPanelPassword)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
 					if (访问路径 === 'admin/log.json') {// 读取日志内容
 						const 读取日志内容 = await env.KV.get('log.json') || '[]';
 						return new Response(读取日志内容, { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -330,22 +334,14 @@ export default {
 							let 路径字段名 = 'path', 域名字段名 = 'host';
 							if (config_JSON.传输协议 === 'grpc') 路径字段名 = 'serviceName', 域名字段名 = 'authority';
 							订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
-								// 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
-								// 示例: 
-								//   - 域名: hj.xmm1993.top:2096#备注 或 example.com
-								//   - IPv4: 166.0.188.128:443#Los Angeles 或 166.0.188.128
-								//   - IPv6: [2606:4700::]:443#CMCC 或 [2606:4700::]
 								const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
 								const match = 原始地址.match(regex);
-
-								let 节点地址, 节点端口 = "443", 节点备注;
-
+								let 节点地址, 节点端口 = '443', 节点备注;
 								if (match) {
-									节点地址 = match[1];  // IP地址或域名(可能带方括号)
-									节点端口 = match[2] ? match[2] : (协议类型 === 'ss' && !config_JSON.SS.TLS) ? '80' : '443';  // 端口,TLS默认443 noTLS默认80
-									节点备注 = match[3] || 节点地址;  // 备注,默认为地址本身
+									节点地址 = match[1];
+									节点端口 = match[2] ? match[2] : (协议类型 === 'ss' && !config_JSON.SS.TLS) ? '80' : '443';
+									节点备注 = match[3] || 节点地址;
 								} else {
-									// 不规范的格式，跳过处理返回null
 									console.warn(`[订阅内容] 不规范的IP格式已忽略: ${原始地址}`);
 									return null;
 								}
@@ -357,12 +353,48 @@ export default {
 								}
 								if (isLoonOrSurge) 完整节点路径 = 完整节点路径.replace(/,/g, '%2C');
 
+								const HTTP端口 = ['80', '8080', '8880', '2052', '2082', '2086', '2095'];
+								const isHTTPS = !HTTP端口.includes(节点端口.toString());
+								const security = isHTTPS ? 'tls' : 'none';
+								const 最终路径 = 作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径);
+
 								if (协议类型 === 'ss' && !作为优选订阅生成器) {
 									完整节点路径 = (完整节点路径.includes('?') ? 完整节点路径.replace('?', '?enc=' + config_JSON.SS.加密方式 + '&') : (完整节点路径 + '?enc=' + config_JSON.SS.加密方式)).replace(/([=,])/g, '\\$1');
 									if (!isSubConverterRequest) 完整节点路径 = 完整节点路径 + ';mux=0';
-									return `${协议类型}://${btoa(config_JSON.SS.加密方式 + ':00000000-0000-4000-8000-000000000000')}@${节点地址}:${节点端口}?plugin=v2${encodeURIComponent('ray-plugin;mode=websocket;host=example.com;path=' + (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径) + (config_JSON.SS.TLS ? ';tls' : '')) + ECHLINK参数 + TLS分片参数}#${encodeURIComponent(节点备注)}`;
-								} else return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${传输协议 + ECHLINK参数}&${域名字段名}=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&${路径字段名}=${encodeURIComponent(作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径)) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
-							}).filter(item => item !== null).join('\n');
+									const pluginOpts = `v2ray-plugin;mode=websocket;host=example.com;path=${最终路径}${isHTTPS ? ';tls' : ''}`;
+									return `${协议类型}://${btoa(config_JSON.SS.加密方式 + ':00000000-0000-4000-8000-000000000000')}@${节点地址}:${节点端口}?plugin=${encodeURIComponent(pluginOpts)}${ECHLINK参数}${TLS分片参数}#${encodeURIComponent(节点备注)}`;
+								} else if (协议类型 === 'vmess') {
+									const vmessObj = {
+										v: '2',
+										ps: 节点备注,
+										add: 节点地址,
+										port: 节点端口,
+										id: '00000000-0000-4000-8000-000000000000',
+										aid: '0',
+										scy: 'auto',
+										net: 传输协议.split('&')[0],
+										type: 'none',
+										host: 'example.com',
+										path: 最终路径,
+										tls: security,
+										sni: isHTTPS ? 'example.com' : '',
+										fp: isHTTPS ? config_JSON.Fingerprint : ''
+									};
+									return `vmess://${btoa(JSON.stringify(vmessObj))}`;
+								} else {
+									let nodeString = `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?type=${传输协议}&${域名字段名}=example.com&${路径字段名}=${encodeURIComponent(最终路径)}`;
+									if (isHTTPS) {
+										nodeString += `&security=tls&fp=${config_JSON.Fingerprint}&sni=example.com`;
+										if (config_JSON.跳过证书验证) nodeString += `&insecure=1&allowInsecure=1`;
+									} else {
+										nodeString += `&security=none`;
+									}
+									if (协议类型 === 'vless') nodeString += `&encryption=none`;
+									nodeString += `${ECHLINK参数}${TLS分片参数}#${encodeURIComponent(节点备注)}`;
+									return nodeString;
+								}
+							}).filter(item => item !== null).join('
+');
 						} else { // 订阅转换
 							const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
 							try {
@@ -376,7 +408,33 @@ export default {
 							}
 						}
 
-						if (!ua.includes('subconverter') && !作为优选订阅生成器) 订阅内容 = 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID).replace(/MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw/g, btoa(config_JSON.UUID)), config_JSON.HOSTS);
+						if (!ua.includes('subconverter') && !作为优选订阅生成器) {
+							订阅内容 = 订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID);
+							订阅内容 = 批量替换域名(订阅内容, config_JSON.HOSTS);
+							
+							// 处理 ss:// 的 base64 部分
+							订阅内容 = 订阅内容.replace(/ss:\/\/([a-zA-Z0-9ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz+\/=]+)@/g, (match, b64) => {
+								try {
+									let decoded = atob(b64);
+									decoded = decoded.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID);
+									return `ss://${btoa(decoded)}@`;
+								} catch (e) {
+									return match;
+								}
+							});
+
+							// 处理 vmess:// 的 base64 部分
+							订阅内容 = 订阅内容.replace(/vmess:\/\/([a-zA-Z0-9ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz+\/=]+)/g, (match, b64) => {
+								try {
+									let decoded = atob(b64);
+									decoded = decoded.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID);
+									decoded = 批量替换域名(decoded, config_JSON.HOSTS);
+									return `vmess://${btoa(decoded)}`;
+								} catch (e) {
+									return match;
+								}
+							});
+						}
 
 						if (订阅类型 === 'mixed' && (!ua.includes('mozilla') || url.searchParams.has('b64') || url.searchParams.has('base64'))) 订阅内容 = btoa(订阅内容);
 
@@ -392,7 +450,7 @@ export default {
 				} else if (访问路径 === 'locations') {//反代locations列表
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
-					if (authCookie && authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return fetch(new Request('https://speed.cloudflare.com/locations', { headers: { 'Referer': 'https://speed.cloudflare.com/' } }));
+					if (webPanelPassword && authCookie && authCookie == await MD5MD5(UA + 加密秘钥 + webPanelPassword)) return fetch(new Request('https://speed.cloudflare.com/locations', { headers: { 'Referer': 'https://speed.cloudflare.com/' } }));
 				} else if (访问路径 === 'robots.txt') return new Response('User-agent: *\nDisallow: /', { status: 200, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
 			} else if (!envUUID) return fetch(Pages静态页面 + '/noKV').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }) });
 		}
