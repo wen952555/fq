@@ -3767,6 +3767,8 @@ async function panelHTML(host, token) {
 }
 
 function 解析配置文件为URI(text) {
+	console.log('text length:', text.length);
+	console.log('text start:', text.substring(0, 50));
 	let uris = [];
 	try {
 		const json = JSON.parse(text);

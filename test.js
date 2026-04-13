@@ -1,5 +1,8 @@
 
+import https from 'https';
 function 解析配置文件为URI(text) {
+	console.log('text length:', text.length);
+	console.log('text start:', text.substring(0, 50));
 	let uris = [];
 	try {
 		const json = JSON.parse(text);
@@ -148,13 +151,11 @@ function 解析配置文件为URI(text) {
 	return uris;
 }
 
-const yaml = `proxies:
-  - name: "ss-proxy"
-    type: ss
-    server: server
-    port: 443
-    cipher: chacha20-ietf-poly1305
-    password: "password"
-`;
-
-console.log(解析配置文件为URI(yaml));
+https.get('https://gitlab.com/free9999/ipupdate/-/raw/master/backup/img/1/2/ipp/clash.meta2/3/config.yaml', (res) => {
+  let data = '';
+  res.on('data', (chunk) => { data += chunk; });
+  res.on('end', () => {
+    const uris = 解析配置文件为URI(data);
+    console.log('Parsed URIs count:', uris.length);
+  });
+});
