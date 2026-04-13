@@ -1,8 +1,5 @@
 
-import https from 'https';
 function 解析配置文件为URI(text) {
-	console.log('text length:', text.length);
-	console.log('text start:', text.substring(0, 50));
 	let uris = [];
 	try {
 		const json = JSON.parse(text);
@@ -112,7 +109,7 @@ function 解析配置文件为URI(text) {
 			const proxy = {};
 			const lines = ('name: ' + block).split('\n');
 			for (const line of lines) {
-				const match = line.match(/^\s*([a-zA-Z0-9-]+):\s*(.+)$/);
+				const match = line.match(/^\s*([a-zA-Z0-9-_]+):\s*(.*?)\s*$/);
 				if (match) {
 					proxy[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
 				}
@@ -151,11 +148,28 @@ function 解析配置文件为URI(text) {
 	return uris;
 }
 
-https.get('https://gitlab.com/free9999/ipupdate/-/raw/master/backup/img/1/2/ipp/clash.meta2/3/config.yaml', (res) => {
-  let data = '';
-  res.on('data', (chunk) => { data += chunk; });
-  res.on('end', () => {
-    const uris = 解析配置文件为URI(data);
-    console.log('Parsed URIs count:', uris.length);
-  });
+const text = `
+https://www.gitlabip.xyz/Alvin9999/PAC/master/backup/img/1/2/ipp/singbox/1/config.json
+https://gitlab.com/free9999/ipupdate/-/raw/master/backup/img/1/2/ipp/singbox/1/config.json
+vless://uuid@host:443?security=tls#remark
+192.168.1.1:8080#local
+`;
+
+const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+const httpUrls = [];
+const proxyLinks = [];
+const otherLines = [];
+
+lines.forEach(line => {
+    if (line.match(/^(vmess|vless|trojan|ss|ssr|tuic|hysteria|hysteria2|hy2|snell|v2ray):\/\//i)) {
+        proxyLinks.push(line);
+    } else if (line.match(/^(http|https):\/\//i)) {
+        httpUrls.push(line);
+    } else {
+        otherLines.push(line);
+    }
 });
+
+console.log('httpUrls:', httpUrls);
+console.log('proxyLinks:', proxyLinks);
+console.log('otherLines:', otherLines);

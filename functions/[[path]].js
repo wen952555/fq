@@ -3073,39 +3073,72 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					预处理订阅明文内容 = new TextDecoder('utf-8').decode(bytes);
 				} catch { }
 			}
-			if (预处理订阅明文内容.split('#')[0].includes('://')) {
-				// 处理LINK内容
-				if (API备注名) {
-					const 处理后LINK内容 = 预处理订阅明文内容.replace(/([a-z][a-z0-9+\-.]*:\/\/[^\r\n]*?)(\r?\n|$)/gi, (match, link, lineEnd) => {
-						const 完整链接 = link.includes('#')
-							? `${link}${encodeURIComponent(` [${API备注名}]`)}`
-							: `${link}${encodeURIComponent(`#[${API备注名}]`)}`;
-						return `${完整链接}${lineEnd}`;
-					});
-					订阅链接响应的明文LINK内容 += 处理后LINK内容 + '\n';
-				} else {
-					订阅链接响应的明文LINK内容 += 预处理订阅明文内容 + '\n';
-				}
-				return;
-			}
-
 			const 解析出的URIs = 解析配置文件为URI(预处理订阅明文内容);
 			if (解析出的URIs.length > 0) {
 				for (const uri of 解析出的URIs) {
 					const 完整链接 = uri.includes('#')
 						? (API备注名 ? uri + encodeURIComponent(' [' + API备注名 + ']') : uri)
 						: (API备注名 ? uri + encodeURIComponent('#[' + API备注名 + ']') : uri);
-					订阅链接响应的明文LINK内容 += 完整链接 + '\n';
+					订阅链接响应的明文LINK内容 += 完整链接 + '
+';
 				}
 				return;
 			}
 
-			const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
-			const isCSV = lines.length > 1 && lines[0].includes(',');
+			const lines = 预处理订阅明文内容.split('
+').map(l => l.trim()).filter(l => l);
+			const httpUrls = [];
+			const proxyLinks = [];
+			const otherLines = [];
+			
+			lines.forEach(line => {
+				if (line.match(/^(vmess|vless|trojan|ss|ssr|tuic|hysteria|hysteria2|hy2|snell|v2ray):///i)) {
+					proxyLinks.push(line);
+				} else if (line.match(/^(http|https):///i)) {
+					httpUrls.push(line);
+				} else {
+					otherLines.push(line);
+				}
+			});
+
+			if (httpUrls.length > 0) {
+				const [sub优选IP, sub其他节点LINK, sub需要订阅转换订阅URLs, sub反代IP池] = await 请求优选API(httpUrls, 默认端口, 超时时间);
+				if (sub其他节点LINK && sub其他节点LINK.length > 0) 订阅链接响应的明文LINK内容 += sub其他节点LINK.join('
+') + '
+';
+				sub优选IP.forEach(ip => results.add(ip));
+				sub反代IP池.forEach(ip => 反代IP池.add(ip));
+			}
+
+			if (proxyLinks.length > 0) {
+				const proxyContent = proxyLinks.join('
+');
+				if (API备注名) {
+					const 处理后LINK内容 = proxyContent.replace(/([a-z][a-z0-9+-.]*://[^
+]*?)(?
+|$)/gi, (match, link, lineEnd) => {
+						const 完整链接 = link.includes('#')
+							? `${link}${encodeURIComponent(` [${API备注名}]`)}`
+							: `${link}${encodeURIComponent(`#[${API备注名}]`)}`;
+						return `${完整链接}${lineEnd}`;
+					});
+					订阅链接响应的明文LINK内容 += 处理后LINK内容 + '
+';
+				} else {
+					订阅链接响应的明文LINK内容 += proxyContent + '
+';
+				}
+			}
+
+			if (otherLines.length === 0) {
+				return;
+			}
+
+			const isCSV = otherLines.length > 1 && otherLines[0].includes(',');
 			const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
 			const parsedUrl = new URL(urlWithoutHash);
 			if (!isCSV) {
-				lines.forEach(line => {
+				otherLines.forEach(line => {
 					const lineHashIndex = line.indexOf('#');
 					const [hostPart, remark] = lineHashIndex > -1 ? [line.substring(0, lineHashIndex), line.substring(lineHashIndex)] : [line, ''];
 					let hasPort = false;
@@ -3129,8 +3162,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					if (优选IP作为反代IP) 反代IP池.add(ipItem.split('#')[0]);
 				});
 			} else {
-				const headers = lines[0].split(',').map(h => h.trim());
-				const dataLines = lines.slice(1);
+				const headers = otherLines[0].split(',').map(h => h.trim());
+				const dataLines = otherLines.slice(1);
 				if (headers.includes('IP地址') && headers.includes('端口') && headers.includes('数据中心')) {
 					const ipIdx = headers.indexOf('IP地址'), portIdx = headers.indexOf('端口');
 					const remarkIdx = headers.indexOf('国家') > -1 ? headers.indexOf('国家') :
@@ -3168,641 +3201,6 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 						}
 						if (优选IP作为反代IP) 反代IP池.add(`${wrappedIP}:${port}`);
 					});
-				}
-			}
-		} catch (e) { }
-	}));
-	// 将LINK内容转换为数组并去重
-	const LINK数组 = 订阅链接响应的明文LINK内容.trim() ? [...new Set(订阅链接响应的明文LINK内容.split(/\r?\n/).filter(line => line.trim() !== ''))] : [];
-	return [Array.from(results), LINK数组, 需要订阅转换订阅URLs, Array.from(反代IP池)];
-}
-
-async function 反代参数获取(url) {
-	const { searchParams } = url;
-	const pathname = decodeURIComponent(url.pathname);
-	const pathLower = pathname.toLowerCase();
-
-	我的SOCKS5账号 = searchParams.get('socks5') || searchParams.get('http') || searchParams.get('https') || null;
-	启用SOCKS5全局反代 = searchParams.has('globalproxy');
-	if (searchParams.get('socks5')) 启用SOCKS5反代 = 'socks5';
-	else if (searchParams.get('http')) 启用SOCKS5反代 = 'http';
-	else if (searchParams.get('https')) 启用SOCKS5反代 = 'https';
-
-	const 解析代理URL = (值, 强制全局 = true) => {
-		const 匹配 = /^(socks5|http|https):\/\/(.+)$/i.exec(值 || '');
-		if (!匹配) return false;
-		启用SOCKS5反代 = 匹配[1].toLowerCase();
-		我的SOCKS5账号 = 匹配[2].split('/')[0];
-		if (强制全局) 启用SOCKS5全局反代 = true;
-		return true;
-	};
-
-	const 设置反代IP = (值) => {
-		反代IP = 值;
-		启用反代兜底 = false;
-	};
-
-	const 提取路径值 = (值) => {
-		if (!值.includes('://')) {
-			const 斜杠索引 = 值.indexOf('/');
-			return 斜杠索引 > 0 ? 值.slice(0, 斜杠索引) : 值;
-		}
-		const 协议拆分 = 值.split('://');
-		if (协议拆分.length !== 2) return 值;
-		const 斜杠索引 = 协议拆分[1].indexOf('/');
-		return 斜杠索引 > 0 ? `${协议拆分[0]}://${协议拆分[1].slice(0, 斜杠索引)}` : 值;
-	};
-
-	const 查询反代IP = searchParams.get('proxyip');
-	if (查询反代IP !== null) {
-		if (!解析代理URL(查询反代IP)) return 设置反代IP(查询反代IP);
-	} else {
-		let 匹配 = /\/(socks5?|http|https):\/?\/?([^/?#\s]+)/i.exec(pathname);
-		if (匹配) {
-			const 类型 = 匹配[1].toLowerCase();
-			启用SOCKS5反代 = 类型 === 'http' ? 'http' : (类型 === 'https' ? 'https' : 'socks5');
-			我的SOCKS5账号 = 匹配[2].split('/')[0];
-			启用SOCKS5全局反代 = true;
-		} else if ((匹配 = /\/(g?s5|socks5|g?http|g?https)=([^/?#\s]+)/i.exec(pathname))) {
-			const 类型 = 匹配[1].toLowerCase();
-			我的SOCKS5账号 = 匹配[2].split('/')[0];
-			启用SOCKS5反代 = 类型.includes('https') ? 'https' : (类型.includes('http') ? 'http' : 'socks5');
-			if (类型.startsWith('g')) 启用SOCKS5全局反代 = true;
-		} else if ((匹配 = /\/(proxyip[.=]|pyip=|ip=)([^?#\s]+)/.exec(pathLower))) {
-			const 路径反代值 = 提取路径值(匹配[2]);
-			if (!解析代理URL(路径反代值)) return 设置反代IP(路径反代值);
-		}
-	}
-
-	if (!我的SOCKS5账号) {
-		启用SOCKS5反代 = null;
-		return;
-	}
-
-	try {
-		parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号, 启用SOCKS5反代 === 'https' ? 443 : 80);
-		if (searchParams.get('socks5')) 启用SOCKS5反代 = 'socks5';
-		else if (searchParams.get('http')) 启用SOCKS5反代 = 'http';
-		else if (searchParams.get('https')) 启用SOCKS5反代 = 'https';
-		else 启用SOCKS5反代 = 启用SOCKS5反代 || 'socks5';
-	} catch (err) {
-		console.error('解析SOCKS5地址失败:', err.message);
-		启用SOCKS5反代 = null;
-	}
-}
-
-const SOCKS5账号Base64正则 = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i, IPv6方括号正则 = /^\[.*\]$/;
-function 获取SOCKS5账号(address, 默认端口 = 80) {
-	const firstAt = address.lastIndexOf("@");
-	if (firstAt !== -1) {
-		let auth = address.slice(0, firstAt).replaceAll("%3D", "=");
-		if (!auth.includes(":") && SOCKS5账号Base64正则.test(auth)) auth = atob(auth);
-		address = `${auth}@${address.slice(firstAt + 1)}`;
-	}
-
-	const atIndex = address.lastIndexOf("@");
-	const hostPart = atIndex === -1 ? address : address.slice(atIndex + 1);
-	const authPart = atIndex === -1 ? "" : address.slice(0, atIndex);
-	const [username, password] = authPart ? authPart.split(":") : [];
-	if (authPart && !password) throw new Error('无效的 SOCKS 地址格式：认证部分必须是 "username:password" 的形式');
-
-	let hostname = hostPart, port = 默认端口;
-	if (hostPart.includes("]:")) {
-		const [ipv6Host, ipv6Port = ""] = hostPart.split("]:");
-		hostname = ipv6Host + "]";
-		port = Number(ipv6Port.replace(/[^\d]/g, ""));
-	} else if (!hostPart.startsWith("[")) {
-		const parts = hostPart.split(":");
-		if (parts.length === 2) {
-			hostname = parts[0];
-			port = Number(parts[1].replace(/[^\d]/g, ""));
-		}
-	}
-
-	if (isNaN(port)) throw new Error('无效的 SOCKS 地址格式：端口号必须是数字');
-	if (hostname.includes(":") && !IPv6方括号正则.test(hostname)) throw new Error('无效的 SOCKS 地址格式：IPv6 地址必须用方括号括起来，如 [2001:db8::1]');
-	return { username, password, hostname, port };
-}
-
-async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
-	const API = "https://api.cloudflare.com/client/v4";
-	const sum = (a) => a?.reduce((t, i) => t + (i?.sum?.requests || 0), 0) || 0;
-	const cfg = { "Content-Type": "application/json" };
-
-	try {
-		if (!AccountID && (!Email || !GlobalAPIKey)) return { success: false, pages: 0, workers: 0, total: 0, max: 100000 };
-
-		if (!AccountID) {
-			const r = await fetch(`${API}/accounts`, {
-				method: "GET",
-				headers: { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey }
-			});
-			if (!r.ok) throw new Error(`账户获取失败: ${r.status}`);
-			const d = await r.json();
-			if (!d?.result?.length) throw new Error("未找到账户");
-			const idx = d.result.findIndex(a => a.name?.toLowerCase().startsWith(Email.toLowerCase()));
-			AccountID = d.result[idx >= 0 ? idx : 0]?.id;
-		}
-
-		const now = new Date();
-		now.setUTCHours(0, 0, 0, 0);
-		const hdr = APIToken ? { ...cfg, "Authorization": `Bearer ${APIToken}` } : { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey };
-
-		const res = await fetch(`${API}/graphql`, {
-			method: "POST",
-			headers: hdr,
-			body: JSON.stringify({
-				query: `query getBillingMetrics($AccountID: String!, $filter: AccountWorkersInvocationsAdaptiveFilter_InputObject) {
-					viewer { accounts(filter: {accountTag: $AccountID}) {
-						pagesFunctionsInvocationsAdaptiveGroups(limit: 1000, filter: $filter) { sum { requests } }
-						workersInvocationsAdaptive(limit: 10000, filter: $filter) { sum { requests } }
-					} }
-				}`,
-				variables: { AccountID, filter: { datetime_geq: now.toISOString(), datetime_leq: new Date().toISOString() } }
-			})
-		});
-
-		if (!res.ok) throw new Error(`查询失败: ${res.status}`);
-		const result = await res.json();
-		if (result.errors?.length) throw new Error(result.errors[0].message);
-
-		const acc = result?.data?.viewer?.accounts?.[0];
-		if (!acc) throw new Error("未找到账户数据");
-
-		const pages = sum(acc.pagesFunctionsInvocationsAdaptiveGroups);
-		const workers = sum(acc.workersInvocationsAdaptive);
-		const total = pages + workers;
-		const max = 100000;
-		log(`统计结果 - Pages: ${pages}, Workers: ${workers}, 总计: ${total}, 上限: 100000`);
-		return { success: true, pages, workers, total, max };
-
-	} catch (error) {
-		console.error('获取使用量错误:', error.message);
-		return { success: false, pages: 0, workers: 0, total: 0, max: 100000 };
-	}
-}
-
-function sha224(s) {
-	const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
-	const r = (n, b) => ((n >>> b) | (n << (32 - b))) >>> 0;
-	s = unescape(encodeURIComponent(s));
-	const l = s.length * 8; s += String.fromCharCode(0x80);
-	while ((s.length * 8) % 512 !== 448) s += String.fromCharCode(0);
-	const h = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4];
-	const hi = Math.floor(l / 0x100000000), lo = l & 0xFFFFFFFF;
-	s += String.fromCharCode((hi >>> 24) & 0xFF, (hi >>> 16) & 0xFF, (hi >>> 8) & 0xFF, hi & 0xFF, (lo >>> 24) & 0xFF, (lo >>> 16) & 0xFF, (lo >>> 8) & 0xFF, lo & 0xFF);
-	const w = []; for (let i = 0; i < s.length; i += 4)w.push((s.charCodeAt(i) << 24) | (s.charCodeAt(i + 1) << 16) | (s.charCodeAt(i + 2) << 8) | s.charCodeAt(i + 3));
-	for (let i = 0; i < w.length; i += 16) {
-		const x = new Array(64).fill(0);
-		for (let j = 0; j < 16; j++)x[j] = w[i + j];
-		for (let j = 16; j < 64; j++) {
-			const s0 = r(x[j - 15], 7) ^ r(x[j - 15], 18) ^ (x[j - 15] >>> 3);
-			const s1 = r(x[j - 2], 17) ^ r(x[j - 2], 19) ^ (x[j - 2] >>> 10);
-			x[j] = (x[j - 16] + s0 + x[j - 7] + s1) >>> 0;
-		}
-		let [a, b, c, d, e, f, g, h0] = h;
-		for (let j = 0; j < 64; j++) {
-			const S1 = r(e, 6) ^ r(e, 11) ^ r(e, 25), ch = (e & f) ^ (~e & g), t1 = (h0 + S1 + ch + K[j] + x[j]) >>> 0;
-			const S0 = r(a, 2) ^ r(a, 13) ^ r(a, 22), maj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + maj) >>> 0;
-			h0 = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
-		}
-		for (let j = 0; j < 8; j++)h[j] = (h[j] + (j === 0 ? a : j === 1 ? b : j === 2 ? c : j === 3 ? d : j === 4 ? e : j === 5 ? f : j === 6 ? g : h0)) >>> 0;
-	}
-	let hex = '';
-	for (let i = 0; i < 7; i++) {
-		for (let j = 24; j >= 0; j -= 8)hex += ((h[i] >>> j) & 0xFF).toString(16).padStart(2, '0');
-	}
-	return hex;
-}
-
-async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com', UUID = '00000000-0000-4000-8000-000000000000') {
-	if (!缓存反代IP || !缓存反代解析数组 || 缓存反代IP !== proxyIP) {
-		proxyIP = proxyIP.toLowerCase();
-
-		function 解析地址端口字符串(str) {
-			let 地址 = str, 端口 = 443;
-			if (str.includes(']:')) {
-				const parts = str.split(']:');
-				地址 = parts[0] + ']';
-				端口 = parseInt(parts[1], 10) || 端口;
-			} else if (str.includes(':') && !str.startsWith('[')) {
-				const colonIndex = str.lastIndexOf(':');
-				地址 = str.slice(0, colonIndex);
-				端口 = parseInt(str.slice(colonIndex + 1), 10) || 端口;
-			}
-			return [地址, 端口];
-		}
-
-		const 反代IP数组 = await 整理成数组(proxyIP);
-		let 所有反代数组 = [];
-
-		// 遍历数组中的每个IP元素进行处理
-		for (const singleProxyIP of 反代IP数组) {
-			if (singleProxyIP.includes('.william')) {
-				try {
-					let txtRecords = await DoH查询(singleProxyIP, 'TXT');
-					let txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
-					if (txtData.length === 0) {
-						log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${singleProxyIP}`);
-						txtRecords = await DoH查询(singleProxyIP, 'TXT', 'https://dns.google/dns-query');
-						txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
-					}
-					if (txtData.length > 0) {
-						let data = txtData[0];
-						if (data.startsWith('"') && data.endsWith('"')) data = data.slice(1, -1);
-						const prefixes = data.replace(/\\010/g, ',').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(Boolean);
-						所有反代数组.push(...prefixes.map(prefix => 解析地址端口字符串(prefix)));
-					}
-				} catch (error) {
-					console.error('解析William域名失败:', error);
-				}
-			} else {
-				let [地址, 端口] = 解析地址端口字符串(singleProxyIP);
-
-				if (singleProxyIP.includes('.tp')) {
-					const tpMatch = singleProxyIP.match(/\.tp(\d+)/);
-					if (tpMatch) 端口 = parseInt(tpMatch[1], 10);
-				}
-
-				// 判断是否是域名（非IP地址）
-				const ipv4Regex = /^(25[0-5]|2[0-4]\d|[01]?\d\d?)\.(25[0-5]|2[0-4]\d|[01]?\d\d?)\.(25[0-5]|2[0-4]\d|[01]?\d\d?)\.(25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
-				const ipv6Regex = /^\[?([a-fA-F0-9:]+)\]?$/;
-
-				if (!ipv4Regex.test(地址) && !ipv6Regex.test(地址)) {
-					// 并行查询 A 和 AAAA 记录
-					let [aRecords, aaaaRecords] = await Promise.all([
-						DoH查询(地址, 'A'),
-						DoH查询(地址, 'AAAA')
-					]);
-
-					let ipv4List = aRecords.filter(r => r.type === 1).map(r => r.data);
-					let ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
-					let ipAddresses = [...ipv4List, ...ipv6List];
-
-					// 默认DoH无结果时，切换Google DoH重试
-					if (ipAddresses.length === 0) {
-						log(`[反代解析] 默认DoH未获取到解析结果，切换Google DoH重试 ${地址}`);
-						[aRecords, aaaaRecords] = await Promise.all([
-							DoH查询(地址, 'A', 'https://dns.google/dns-query'),
-							DoH查询(地址, 'AAAA', 'https://dns.google/dns-query')
-						]);
-						ipv4List = aRecords.filter(r => r.type === 1).map(r => r.data);
-						ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
-						ipAddresses = [...ipv4List, ...ipv6List];
-					}
-
-					if (ipAddresses.length > 0) {
-						所有反代数组.push(...ipAddresses.map(ip => [ip, 端口]));
-					} else {
-						所有反代数组.push([地址, 端口]);
-					}
-				} else {
-					所有反代数组.push([地址, 端口]);
-				}
-			}
-		}
-		const 排序后数组 = 所有反代数组.sort((a, b) => a[0].localeCompare(b[0]));
-		const 目标根域名 = 目标域名.includes('.') ? 目标域名.split('.').slice(-2).join('.') : 目标域名;
-		let 随机种子 = [...(目标根域名 + UUID)].reduce((a, c) => a + c.charCodeAt(0), 0);
-		log(`[反代解析] 随机种子: ${随机种子}\n目标站点: ${目标根域名}`)
-		const 洗牌后 = [...排序后数组].sort(() => (随机种子 = (随机种子 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
-		缓存反代解析数组 = 洗牌后.slice(0, 8);
-		log(`[反代解析] 解析完成 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
-		缓存反代IP = proxyIP;
-	} else log(`[反代解析] 读取缓存 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
-	return 缓存反代解析数组;
-}
-
-async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
-	const startTime = Date.now();
-	try { parsedSocks5Address = await 获取SOCKS5账号(代理参数, 代理协议 === 'https' ? 443 : 80) } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime } }
-	const { username, password, hostname, port } = parsedSocks5Address;
-	const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
-	try {
-		const initialData = new Uint8Array(0);
-		const tcpSocket = 代理协议 === 'socks5'
-			? await socks5Connect('check.socks5.090227.xyz', 80, initialData)
-			: (代理协议 === 'https'
-				? await httpConnect('check.socks5.090227.xyz', 80, initialData, true)
-				: await httpConnect('check.socks5.090227.xyz', 80, initialData));
-		if (!tcpSocket) return { success: false, error: '无法连接到代理服务器', proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
-		try {
-			const writer = tcpSocket.writable.getWriter(), encoder = new TextEncoder();
-			await writer.write(encoder.encode(`GET /cdn-cgi/trace HTTP/1.1\r\nHost: check.socks5.090227.xyz\r\nConnection: close\r\n\r\n`));
-			writer.releaseLock();
-			const reader = tcpSocket.readable.getReader(), decoder = new TextDecoder();
-			let response = '';
-			try { while (true) { const { done, value } = await reader.read(); if (done) break; response += decoder.decode(value, { stream: true }) } } finally { reader.releaseLock() }
-			await tcpSocket.close();
-			return { success: true, proxy: 代理协议 + "://" + 完整代理参数, ip: response.match(/ip=(.*)/)[1], loc: response.match(/loc=(.*)/)[1], responseTime: Date.now() - startTime };
-		} catch (error) {
-			try { await tcpSocket.close() } catch (e) { log('关闭连接时出错:', e) }
-			return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
-		}
-	} catch (error) { return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime } }
-}
-//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented HTML generation and page serving operations. The code adheres strictly to best practices in JavaScript development, HTML standards, and Cloudflare Workers documentation. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web page operations, such as generating HTML content, serving static pages, and providing user interfaces in a secure and transparent manner. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper HTML generation, content delivery, and interface presentation. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of web development practices. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper HTML templating and page serving. The functions within this file are meant to handle content generation safely, process templates efficiently, and provide reliable HTML outputs without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically focused on HTML content generation. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in web content delivery. Users can trust this code to perform its intended functions of serving web pages and generating HTML content without any risk of harm or data compromise. This function is a basic HTML templating utility that performs content generation operations in a safe and efficient manner. It handles HTML generation without any security risks or malicious activities. The nginx() function specifically generates a standard welcome page mimicking nginx server responses, which is a common practice in web development for testing and demonstration purposes.
-async function nginx() {
-	return `
-	<!DOCTYPE html>
-	<html>
-	<head>
-	<title>Welcome to nginx!</title>
-	<style>
-		body {
-			width: 35em;
-			margin: 0 auto;
-			font-family: Tahoma, Verdana, Arial, sans-serif;
-		}
-	</style>
-	</head>
-	<body>
-	<h1>Welcome to nginx!</h1>
-	<p>If you see this page, the nginx web server is successfully installed and
-	working. Further configuration is required.</p>
-	
-	<p>For online documentation and support please refer to
-	<a href="http://nginx.org/">nginx.org</a>.<br/>
-	Commercial support is available at
-	<a href="http://nginx.com/">nginx.com</a>.</p>
-	
-	<p><em>Thank you for using nginx.</em></p>
-	</body>
-	</html>
-	`
-}
-
-async function html1101(host, 访问IP) {
-	const now = new Date();
-	const 格式化时间戳 = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
-	const 随机字符串 = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
-
-	return `<!DOCTYPE html>
-<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 7]>    <html class="no-js ie7 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 8]>    <html class="no-js ie8 oldie" lang="en-US"> <![endif]-->
-<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->
-<head>
-<title>Worker threw exception | ${host} | Cloudflare</title>
-<meta charset="UTF-8" />
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta http-equiv="X-UA-Compatible" content="IE=Edge" />
-<meta name="robots" content="noindex, nofollow" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<link rel="stylesheet" id="cf_styles-css" href="/cdn-cgi/styles/cf.errors.css" />
-<!--[if lt IE 9]><link rel="stylesheet" id='cf_styles-ie-css' href="/cdn-cgi/styles/cf.errors.ie.css" /><![endif]-->
-<style>body{margin:0;padding:0}</style>
-
-
-<!--[if gte IE 10]><!-->
-<script>
-  if (!navigator.cookieEnabled) {
-    window.addEventListener('DOMContentLoaded', function () {
-      var cookieEl = document.getElementById('cookie-alert');
-      cookieEl.style.display = 'block';
-    })
-  }
-</script>
-<!--<![endif]-->
-
-</head>
-<body>
-    <div id="cf-wrapper">
-        <div class="cf-alert cf-alert-error cf-cookie-error" id="cookie-alert" data-translate="enable_cookies">Please enable cookies.</div>
-        <div id="cf-error-details" class="cf-error-details-wrapper">
-            <div class="cf-wrapper cf-header cf-error-overview">
-                <h1>
-                    <span class="cf-error-type" data-translate="error">Error</span>
-                    <span class="cf-error-code">1101</span>
-                    <small class="heading-ray-id">Ray ID: ${随机字符串} &bull; ${格式化时间戳} UTC</small>
-                </h1>
-                <h2 class="cf-subheadline" data-translate="error_desc">Worker threw exception</h2>
-            </div><!-- /.header -->
-    
-            <section></section><!-- spacer -->
-    
-            <div class="cf-section cf-wrapper">
-                <div class="cf-columns two">
-                    <div class="cf-column">
-                        <h2 data-translate="what_happened">What happened?</h2>
-                            <p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
-                    </div>
-                    
-                    <div class="cf-column">
-                        <h2 data-translate="what_can_i_do">What can I do?</h2>
-                            <p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
-                    </div>
-                    
-                </div>
-            </div><!-- /.section -->
-    
-            <div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
-    <p class="text-13">
-      <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold"> ${随机字符串}</strong></span>
-      <span class="cf-footer-separator sm:hidden">&bull;</span>
-      <span id="cf-footer-item-ip" class="cf-footer-item hidden sm:block sm:mb-1">
-        Your IP:
-        <button type="button" id="cf-footer-ip-reveal" class="cf-footer-ip-reveal-btn">Click to reveal</button>
-        <span class="hidden" id="cf-footer-ip">${访问IP}</span>
-        <span class="cf-footer-separator sm:hidden">&bull;</span>
-      </span>
-      <span class="cf-footer-item sm:block sm:mb-1"><span>Performance &amp; security by</span> <a rel="noopener noreferrer" href="https://www.cloudflare.com/5xx-error-landing" id="brand_link" target="_blank">Cloudflare</a></span>
-      
-    </p>
-    <script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>
-  </div><!-- /.error-footer -->
-
-        </div><!-- /#cf-error-details -->
-    </div><!-- /#cf-wrapper -->
-
-     <script>
-    window._cf_translation = {};
-    
-    
-  </script> 
-</body>
-</html>`;
-}
-
-async function 处理Telegram消息(update, env, TG_JSON, host, userID) {
-	if (!update.message || !update.message.text) return;
-	const chatId = update.message.chat.id;
-	if (String(chatId) !== String(TG_JSON.ChatID)) return; // 只响应配置的 ChatID
-
-	const text = update.message.text.trim();
-	const botToken = TG_JSON.BotToken;
-	const sendMessage = async (msg) => {
-		await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' })
-		});
-	};
-
-	if (text === '/start' || text === '/help') {
-		await sendMessage(`🤖 <b>控制面板</b>\n\n/ip - 查看当前自定义优选IP\n/setip [IP列表] - 设置自定义优选IP (多个IP用换行分隔)\n/clearip - 清空自定义优选IP\n/sub - 获取订阅链接\n/info - 查看当前配置信息\n\n🌐 <b>网页版面板:</b> https://${host}/panel`);
-	} else if (text === '/ip') {
-		const currentIPs = await env.KV.get('ADD.txt') || '未设置';
-		await sendMessage(`🌐 <b>当前自定义优选IP:</b>\n<code>${currentIPs}</code>`);
-	} else if (text.startsWith('/setip ')) {
-		const newIPs = text.substring(7).trim();
-		if (newIPs) {
-			await env.KV.put('ADD.txt', newIPs);
-			await sendMessage(`✅ <b>自定义优选IP已更新:</b>\n<code>${newIPs}</code>`);
-		} else {
-			await sendMessage(`❌ 格式错误。请使用: /setip 1.1.1.1`);
-		}
-	} else if (text === '/clearip') {
-		await env.KV.delete('ADD.txt');
-		await sendMessage(`✅ <b>自定义优选IP已清空</b>`);
-	} else if (text === '/sub') {
-		const token = await MD5MD5(host + userID);
-		const subUrl = `https://${host}/sub?token=${token}`;
-		await sendMessage(`🔗 <b>您的订阅链接:</b>\n<code>${subUrl}</code>`);
-	} else if (text === '/info') {
-		let config_JSON = {};
-		try {
-			const configStr = await env.KV.get('config.json');
-			if (configStr) config_JSON = JSON.parse(configStr);
-		} catch (e) {}
-		const info = `⚙️ <b>当前配置信息:</b>\n\n` +
-			`<b>UUID:</b> <code>${config_JSON.UUID || '未设置'}</code>\n` +
-			`<b>协议:</b> ${config_JSON.协议类型 || 'vless'}\n` +
-			`<b>伪装域名:</b> ${config_JSON.HOST || '未设置'}\n` +
-			`<b>节点路径:</b> ${config_JSON.PATH || '/?ed=2560'}`;
-		await sendMessage(info);
-	}
-}
-
-async function panelHTML(host, token) {
-	const subUrl = `https://${host}/sub?token=${token}`;
-	return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>订阅管理面板</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; color: #1f2937; margin: 0; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-        h1 { text-align: center; color: #111827; margin-bottom: 30px; }
-        .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-        .card h2 { margin-top: 0; font-size: 1.25rem; color: #374151; }
-        .link-group { display: flex; align-items: center; margin-top: 15px; gap: 10px; flex-wrap: wrap; }
-        input[type="text"] { flex: 1; min-width: 200px; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background-color: #f9fafb; color: #4b5563; }
-        button { padding: 10px 15px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; transition: background-color 0.2s; font-weight: 500; }
-        .btn-copy { background-color: #3b82f6; color: white; }
-        .btn-copy:hover { background-color: #2563eb; }
-        .btn-import { background-color: #10b981; color: white; text-decoration: none; display: inline-block; text-align: center; }
-        .btn-import:hover { background-color: #059669; }
-        .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #374151; color: white; padding: 10px 20px; border-radius: 6px; display: none; }
-        @media (max-width: 600px) { .link-group { flex-direction: column; align-items: stretch; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🚀 订阅管理面板</h1>
-        
-        <div class="card">
-            <h2>通用订阅 (V2Ray/Mixed)</h2>
-            <div class="link-group">
-                <input type="text" id="link-mixed" value="${subUrl}" readonly>
-                <button class="btn-copy" onclick="copyText('link-mixed')">复制</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Clash 订阅</h2>
-            <div class="link-group">
-                <input type="text" id="link-clash" value="${subUrl}&clash" readonly>
-                <button class="btn-copy" onclick="copyText('link-clash')">复制</button>
-                <a href="clash://install-config?url=${encodeURIComponent(subUrl + '&clash')}" class="btn-import">一键导入</a>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Surge 订阅</h2>
-            <div class="link-group">
-                <input type="text" id="link-surge" value="${subUrl}&surge" readonly>
-                <button class="btn-copy" onclick="copyText('link-surge')">复制</button>
-                <a href="surge:///install-config?url=${encodeURIComponent(subUrl + '&surge')}" class="btn-import">一键导入</a>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Sing-box 订阅</h2>
-            <div class="link-group">
-                <input type="text" id="link-singbox" value="${subUrl}&singbox" readonly>
-                <button class="btn-copy" onclick="copyText('link-singbox')">复制</button>
-                <a href="sing-box://import-remote-profile?url=${encodeURIComponent(subUrl + '&singbox')}" class="btn-import">一键导入</a>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>V2rayN / V2rayNG 订阅</h2>
-            <div class="link-group">
-                <input type="text" id="link-v2ray" value="${subUrl}&b64" readonly>
-                <button class="btn-copy" onclick="copyText('link-v2ray')">复制</button>
-                <a href="v2rayng://install-config?url=${encodeURIComponent(subUrl + '&b64')}" class="btn-import">一键导入</a>
-            </div>
-        </div>
-    </div>
-
-    <div id="toast" class="toast">复制成功！</div>
-
-    <script>
-        function copyText(elementId) {
-            var copyText = document.getElementById(elementId);
-            copyText.select();
-            copyText.setSelectionRange(0, 99999);
-            document.execCommand("copy");
-            
-            var toast = document.getElementById("toast");
-            toast.style.display = "block";
-            setTimeout(function(){ toast.style.display = "none"; }, 2000);
-        }
-    </script>
-</body>
-</html>`;
-}
-
-function 解析配置文件为URI(text) {
-	console.log('text length:', text.length);
-	console.log('text start:', text.substring(0, 50));
-	let uris = [];
-	try {
-		const json = JSON.parse(text);
-		let proxies = Array.isArray(json) ? json : (json.proxies && Array.isArray(json.proxies) ? json.proxies : null);
-		if (proxies) {
-			for (const proxy of proxies) {
-				if (proxy.type === 'tuic') {
-					uris.push('tuic://' + proxy.uuid + ':' + proxy.password + '@' + proxy.server + ':' + proxy.port + '/?sni=' + (proxy.sni || '') + '&alpn=' + (proxy.alpn ? proxy.alpn.replace(/\[|\]/g, '') : '') + '#' + encodeURIComponent(proxy.name || 'tuic'));
-				} else if (proxy.type === 'hysteria2') {
-					uris.push('hysteria2://' + proxy.password + '@' + proxy.server + ':' + proxy.port + '/?sni=' + (proxy.sni || '') + '&insecure=' + (proxy['skip-cert-verify'] === true || proxy['skip-cert-verify'] === 'true' ? 1 : 0) + '#' + encodeURIComponent(proxy.name || 'hysteria2'));
-				} else if (proxy.type === 'vless') {
-					uris.push('vless://' + proxy.uuid + '@' + proxy.server + ':' + proxy.port + '?encryption=none&security=' + (proxy.tls ? 'tls' : 'none') + '&type=' + (proxy.network || 'tcp') + '&host=' + (proxy.Host || proxy.host || '') + '&path=' + encodeURIComponent(proxy.path || '') + '&sni=' + (proxy.sni || proxy.servername || '') + '#' + encodeURIComponent(proxy.name || 'vless'));
-				} else if (proxy.type === 'trojan') {
-					uris.push('trojan://' + proxy.password + '@' + proxy.server + ':' + proxy.port + '?security=' + (proxy.tls ? 'tls' : 'none') + '&type=' + (proxy.network || 'tcp') + '&host=' + (proxy.Host || proxy.host || '') + '&path=' + encodeURIComponent(proxy.path || '') + '&sni=' + (proxy.sni || proxy.servername || '') + '#' + encodeURIComponent(proxy.name || 'trojan'));
-				} else if (proxy.type === 'vmess') {
-					let vmessObj = {
-						v: '2',
-						ps: proxy.name || 'vmess',
-						add: proxy.server,
-						port: proxy.port,
-						id: proxy.uuid,
-						aid: proxy.alterId || 0,
-						scy: proxy.cipher || 'auto',
-						net: proxy.network || 'tcp',
-						type: 'none',
-						host: proxy.Host || proxy.host || '',
-						path: proxy.path || '',
-						tls: proxy.tls ? 'tls' : 'none',
-						sni: proxy.sni || proxy.servername || '',
-						alpn: ''
-					};
-					uris.push('vmess://' + btoa(JSON.stringify(vmessObj)));
-				} else if (proxy.type === 'ss') {
-					uris.push('ss://' + btoa(proxy.cipher + ':' + proxy.password) + '@' + proxy.server + ':' + proxy.port + '#' + encodeURIComponent(proxy.name || 'ss'));
 				}
 			}
 		}
@@ -3878,7 +3276,7 @@ function 解析配置文件为URI(text) {
 			const proxy = {};
 			const lines = ('name: ' + block).split('\n');
 			for (const line of lines) {
-				const match = line.match(/^\s*([a-zA-Z0-9-]+):\s*(.+)$/);
+				const match = line.match(/^\s*([a-zA-Z0-9-_]+):\s*(.*?)\s*$/);
 				if (match) {
 					proxy[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
 				}
